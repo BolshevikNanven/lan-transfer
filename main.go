@@ -18,29 +18,29 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-var uploadDir = "uploads" // 上传文件保存目录
-var port = "80"           // 监听端口
+var uploadDir = "uploads"
+var port = "80"
 
 type PageData struct {
-	Addresses []string // 改为字符串切片
+	Addresses []string
 	Files     []string
 }
 
-// 获取所有可能的局域网 IP 地址
+// getLanIPs attempts to find likely LAN IP addresses for the host.
 func getLanIPs() []string {
 	var ips []string
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		log.Printf("获取网络接口失败: %v", err)
-		return []string{"无法获取IP"}
+		log.Printf("Failed to get network interfaces: %v", err)
+		return []string{"Unable to get IP"}
 	}
 
 	for _, i := range interfaces {
-		// 忽略 down 的接口和环回接口
+		// Ignore down interfaces and loopback
 		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		// 尝试忽略虚拟机和 Docker 接口 (启发式方法，可能不完全准确)
+		// Heuristic to ignore common VM/Docker interfaces
 		if strings.Contains(strings.ToLower(i.Name), "vmnet") ||
 			strings.Contains(strings.ToLower(i.Name), "docker") ||
 			strings.Contains(strings.ToLower(i.Name), "vbox") {
@@ -49,7 +49,7 @@ func getLanIPs() []string {
 
 		addrs, err := i.Addrs()
 		if err != nil {
-			log.Printf("获取接口 [%s] 地址失败: %v", i.Name, err)
+			log.Printf("Failed to get addresses for interface [%s]: %v", i.Name, err)
 			continue
 		}
 
@@ -62,36 +62,35 @@ func getLanIPs() []string {
 				ip = v.IP
 			}
 
-			// 只关心 IPv4, 非环回，并且最好是私有地址 (虽然也包括其他)
+			// We only care about IPv4, non-loopback addresses.
 			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
 				continue
 			}
 
-			// 添加到列表
 			ips = append(ips, ip.String())
 		}
 	}
 
 	if len(ips) == 0 {
-		return []string{"127.0.0.1"} // 如果找不到，返回本地回环
+		return []string{"127.0.0.1"} // Fallback to loopback if no suitable IP is found
 	}
 
 	return ips
 }
 
-// 主页处理器
+// indexHandler serves the main HTML page.
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFS(staticFiles, "static/index.html")
 	if err != nil {
-		http.Error(w, "无法解析模板", http.StatusInternalServerError)
-		log.Printf("模板解析错误: %v", err)
+		http.Error(w, "Could not parse template", http.StatusInternalServerError)
+		log.Printf("Template parsing error: %v", err)
 		return
 	}
 
 	files, err := listFiles(uploadDir)
 	if err != nil {
-		http.Error(w, "无法列出文件", http.StatusInternalServerError)
-		log.Printf("列出文件错误: %v", err)
+		http.Error(w, "Could not list files", http.StatusInternalServerError)
+		log.Printf("File listing error: %v", err)
 		return
 	}
 
@@ -102,57 +101,57 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := PageData{
-		Addresses: addresses, // 传递地址列表
+		Addresses: addresses,
 		Files:     files,
 	}
 
 	err = tmpl.Execute(w, data)
 	if err != nil {
-		http.Error(w, "无法执行模板", http.StatusInternalServerError)
-		log.Printf("模板执行错误: %v", err)
+		http.Error(w, "Could not execute template", http.StatusInternalServerError)
+		log.Printf("Template execution error: %v", err)
 	}
 }
 
-// 文件上传处理器 (保持不变)
+// uploadHandler handles file uploads via POST request.
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "只允许 POST 方法", http.StatusMethodNotAllowed)
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	err := r.ParseMultipartForm(math.MaxInt64)
+	err := r.ParseMultipartForm(math.MaxInt64) // Use a large limit
 	if err != nil {
-		sendJSONResponse(w, false, fmt.Sprintf("文件太大或解析错误: %v", err))
+		sendJSONResponse(w, false, fmt.Sprintf("File too large or form parsing error: %v", err))
 		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		sendJSONResponse(w, false, fmt.Sprintf("获取文件错误: %v", err))
+		sendJSONResponse(w, false, fmt.Sprintf("Error retrieving file: %v", err))
 		return
 	}
 	defer file.Close()
 
-	_ = os.MkdirAll(uploadDir, os.ModePerm)
+	_ = os.MkdirAll(uploadDir, os.ModePerm) // Ensure upload directory exists
 	dstPath := filepath.Join(uploadDir, handler.Filename)
 	dst, err := os.Create(dstPath)
 	if err != nil {
-		sendJSONResponse(w, false, fmt.Sprintf("创建文件错误: %v", err))
+		sendJSONResponse(w, false, fmt.Sprintf("Error creating file: %v", err))
 		return
 	}
 	defer dst.Close()
 
 	_, err = io.Copy(dst, file)
 	if err != nil {
-		sendJSONResponse(w, false, fmt.Sprintf("保存文件错误: %v", err))
+		sendJSONResponse(w, false, fmt.Sprintf("Error saving file: %v", err))
 		return
 	}
 
-	log.Printf("文件已上传: %s", handler.Filename)
-	sendJSONResponse(w, true, "上传成功！")
+	log.Printf("File uploaded successfully: %s", handler.Filename)
+	sendJSONResponse(w, true, "Upload successful!")
 }
 
-// 发送 JSON 响应 (保持不变)
+// sendJSONResponse sends a standardized JSON response.
 func sendJSONResponse(w http.ResponseWriter, success bool, message string) {
 	response := map[string]any{
 		"success": success,
@@ -160,17 +159,17 @@ func sendJSONResponse(w http.ResponseWriter, success bool, message string) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("发送 JSON 响应错误: %v", err)
+		log.Printf("Error sending JSON response: %v", err)
 	}
 }
 
-// 列出上传目录中的文件 (保持不变)
+// listFiles reads the upload directory and returns a list of filenames.
 func listFiles(dir string) ([]string, error) {
 	var files []string
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return files, nil
+			return files, nil // If dir doesn't exist, return empty list
 		}
 		return nil, err
 	}
@@ -182,7 +181,7 @@ func listFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-// 静态文件服务器
+// staticHandler serves files embedded in the binary.
 func staticHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/static/")
 	file, err := staticFiles.Open("static/" + path)
@@ -194,49 +193,50 @@ func staticHandler(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := file.Stat()
 	if err != nil {
-		http.Error(w, "无法获取文件信息", http.StatusInternalServerError)
+		http.Error(w, "Could not get file info", http.StatusInternalServerError)
 		return
 	}
 
-	// *** 关键: 确保 CSS 文件有正确的 MIME 类型 ***
+	// Ensure CSS files have the correct MIME type for proper browser rendering.
 	if strings.HasSuffix(path, ".css") {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	}
 
-	// 使用 http.ServeContent, 但需要 ReadSeeker
-	// embed.FS 的文件本身不直接实现 ReadSeeker, 但 http.FSFileServer 可以处理
-	// 为了简单起见，我们直接读取并写入，或使用 http.ServeFileFS
-	// 但这里既然已经打开，手动 ServeContent 更好控制
-	// 注意: embed.File 实现了 ReadSeeker, 所以 file.(io.ReadSeeker) 应该是有效的
+	// Serve the content using http.ServeContent, which handles range requests and sets headers.
+	// embed.File implements io.ReadSeeker, so type assertion is valid.
 	http.ServeContent(w, r, stat.Name(), stat.ModTime(), file.(io.ReadSeeker))
 }
 
 func main() {
+	// Ensure the upload directory exists on startup.
 	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-		log.Fatalf("无法创建上传目录: %v", err)
+		log.Fatalf("Could not create upload directory: %v", err)
 	}
 
+	// Register HTTP handlers.
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/upload", uploadHandler)
-	http.HandleFunc("/static/", staticHandler) // 确保这个处理器能正确服务 CSS
+	http.HandleFunc("/static/", staticHandler)
 	http.Handle("/download/", http.StripPrefix("/download/", http.FileServer(http.Dir(uploadDir))))
 
 	localIPs := getLanIPs()
 
+	// Print startup information to the console.
 	fmt.Println("=====================================")
 	fmt.Println("🚀 LAN File Transfer (Linear Style) 🚀")
-	fmt.Printf("💻 本地访问: http://127.0.0.1:%s\n", port)
-	fmt.Println("🌐 局域网其他设备请尝试访问以下地址:")
-	if len(localIPs) > 0 && localIPs[0] != "无法获取IP" {
+	fmt.Printf("💻 Local access: http://127.0.0.1:%s\n", port)
+	fmt.Println("🌐 Try these addresses on other LAN devices:")
+	if len(localIPs) > 0 && localIPs[0] != "Unable to get IP" {
 		for _, ip := range localIPs {
 			fmt.Printf("   -> http://%s:%s\n", ip, port)
 		}
 	} else {
-		fmt.Println("   ! 未找到合适的局域网 IP, 请手动查询并访问。")
+		fmt.Println("   ! Could not find suitable LAN IPs. Please check manually.")
 	}
-	fmt.Println("📂 上传的文件将保存在 'uploads' 目录中。")
-	fmt.Println("💡 按 Ctrl+C 停止服务。")
+	fmt.Printf("📂 Uploaded files will be saved in the '%s' directory.\n", uploadDir)
+	fmt.Println("💡 Press Ctrl+C to stop the server.")
 	fmt.Println("=====================================")
 
+	// Start the web server.
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
